@@ -18,7 +18,10 @@ from populate_mgfs import (B, DEFAULT_ACCOUNT_DATABASE,
                            SYSTEM_PERMISSIONS, TEMP_PERMISSIONS,
                            USER_PERMISSIONS,
                            RECORD_INLINE_DATA, RECORD_OWNER_SHIFT,
-                           RECORD_PERMISSIONS_SHIFT, directory_entry, w64)
+                           RECORD_PERMISSIONS_SHIFT,
+                           RECORD_CHILD_MUTATION_SHIFT,
+                           RECORD_CHILD_MUTATION_OWNER_RESTRICTED,
+                           directory_entry, w64)
 from populate_mgfs import (HELP_FILES, HELP_INDEX_NAME, build_help_index)
 from image_payloads import (BIN_PAYLOAD_NAMES, PAYLOAD_MANIFEST,
                             DATA_MANIFEST, DATA_RECORD_IDS,
@@ -32,7 +35,8 @@ RECORDS_PER_TABLE_BLOCK = 21
 METADATA_CHECKSUM_OFFSET = 16
 RECORD_CHECKSUM_OFFSET = 184
 SUPER_CHECKSUM_OFFSET = 192
-MGFS_FORMAT_MINOR = 1
+MGFS_FORMAT_MINOR = 2
+MGFS_FORMAT_MINOR_LEGACY = 1
 VFS_UID_SYSTEM = 0
 DEVELOPER_UID = 1000
 FIRST_USER_UID = 1001
@@ -120,12 +124,12 @@ HELP_NAMES = (HELP_INDEX_NAME,) + HELP_FILES
 CONF_RECORD_ID = 5
 CORE_RECORD_ID = 4
 HOME_RECORD_ID = 7
-TMP_RECORD_ID = 6
+TEMP_RECORD_ID = 6
 VOL_RECORD_ID = 73
 RESERVED_SYSTEM_RECORD_IDS = frozenset(SYSTEM_RECORDS) | {
     NETWORK_RECORD_ID, NETWORK_CONFIG_RECORD_ID, DEVELOPER_HOME_RECORD_ID,
     STATE_RECORD_ID, ACCOUNTS_RECORD_ID, ACCOUNT_DATABASE_RECORD_ID,
-    CONF_RECORD_ID, CORE_RECORD_ID, HOME_RECORD_ID, TMP_RECORD_ID,
+    CONF_RECORD_ID, CORE_RECORD_ID, HOME_RECORD_ID, TEMP_RECORD_ID,
     VOL_RECORD_ID, PITH_RECORD_ID, SECURITY_RECORD_ID,
     SECURITY_CONFIG_RECORD_ID, NETWORKD_RECORD_ID, DEVICED_RECORD_ID,
     VOLUMED_RECORD_ID,
@@ -562,6 +566,10 @@ def record_permissions(record):
     return (u64(record, 8) >> RECORD_PERMISSIONS_SHIFT) & 0xf
 
 
+def record_child_mutation_policy(record):
+    return 1 if u64(record, 8) & (1 << RECORD_CHILD_MUTATION_SHIFT) else 0
+
+
 def bitmap_location(layout, bit):
     bitmap_block = bit // 32576
     byte_offset = bitmap_block * B + 24 + (bit % 32576) // 8
@@ -621,19 +629,22 @@ def make_extents(blocks, flags=1):
 
 
 def record_flags(owner_uid=VFS_UID_SYSTEM, permissions=SYSTEM_PERMISSIONS,
-                 inline_data=False):
+                 inline_data=False, child_mutation_policy=0):
     return ((RECORD_INLINE_DATA if inline_data else 0) |
             (owner_uid << RECORD_OWNER_SHIFT) |
-            (permissions << RECORD_PERMISSIONS_SHIFT))
+            (permissions << RECORD_PERMISSIONS_SHIFT) |
+            (RECORD_CHILD_MUTATION_OWNER_RESTRICTED << RECORD_CHILD_MUTATION_SHIFT
+             if child_mutation_policy else 0))
 
 
 def write_record(image, offset, record_id, record_type, generation, payload,
                  extents, list_head, owner_uid=VFS_UID_SYSTEM,
-                 permissions=SYSTEM_PERMISSIONS):
+                 permissions=SYSTEM_PERMISSIONS, child_mutation_policy=0):
     record = bytearray(RECORD_BYTES)
     w64(record, 0, record_type)
     w64(record, 8, record_flags(owner_uid, permissions,
-                               record_type == 1 and not extents))
+                               record_type == 1 and not extents,
+                               child_mutation_policy if record_type == 2 else 0))
     w64(record, 16, record_id)
     w64(record, 24, generation)
     w64(record, 32, len(payload))
@@ -693,7 +704,8 @@ def replace_directory_payload(image, layout, record_id, payload, reserved):
     write_extent_lists(image, record_id, extents, list_blocks)
     write_record(image, offset, record_id, 2, u64(old_record, 24) + 1,
                  payload, extents, list_blocks[0] if list_blocks else 0,
-                 record_owner(old_record), record_permissions(old_record))
+                 record_owner(old_record), record_permissions(old_record),
+                 record_child_mutation_policy(old_record))
 
     for block in old_data_blocks[len(selected_blocks):]:
         set_allocated(image, layout, block, False)
@@ -773,10 +785,15 @@ def scrub_free_record(image, layout, slot, record):
     inline_count = u64(record, 48)
     list_head = u64(record, 56)
     known_flags = RECORD_INLINE_DATA | ((1 << 32) - 1) << RECORD_OWNER_SHIFT | \
-        ((1 << 4) - 1) << RECORD_PERMISSIONS_SHIFT
+        ((1 << 4) - 1) << RECORD_PERMISSIONS_SHIFT | \
+        (RECORD_CHILD_MUTATION_OWNER_RESTRICTED <<
+         RECORD_CHILD_MUTATION_SHIFT)
 
     if (record_type not in (1, 2) or record_id == 0 or generation == 0 or
             flags & ~known_flags or
+            (record_type == 1 and
+             flags & (RECORD_CHILD_MUTATION_OWNER_RESTRICTED <<
+                      RECORD_CHILD_MUTATION_SHIFT)) or
             ((flags >> RECORD_PERMISSIONS_SHIFT) & 0xF) == 0):
         raise RuntimeError("free MGFS Record slot %d is malformed" % slot)
     checked = bytearray(record)
@@ -849,7 +866,7 @@ def reconcile_record_bitmap(image, layout):
 
 
 def ensure_hierarchy_layout(image, layout):
-    """Install the canonical root directories and migrate old root names."""
+    """Install the canonical root directories and migrate defined root names."""
     root_offset = record_offset(image, layout["record_table_start"], 1,
                                 layout["record_count"])
     root_record = bytes(image[root_offset:root_offset + RECORD_BYTES])
@@ -873,7 +890,7 @@ def ensure_hierarchy_layout(image, layout):
         return offset
 
     for old_name, new_name in (("user", "home"), ("state", "sys"),
-                               ("mount", "vol"), ("temp", "tmp")):
+                               ("mount", "vol")):
         old_id = directory_find(root_payload, old_name)
         new_id = directory_find(root_payload, new_name)
         if old_id is None:
@@ -888,7 +905,8 @@ def ensure_hierarchy_layout(image, layout):
         changed = True
 
     required = ("bin", "boot", "conf", "core", "home", "share", "sys",
-                "tmp", "vol")
+                "temp", "vol")
+    temp_was_present = directory_find(root_payload, "temp") is not None
     for name in required:
         record_id = directory_find(root_payload, name)
         if record_id is not None:
@@ -905,14 +923,25 @@ def ensure_hierarchy_layout(image, layout):
         root_payload += directory_entry(record_id, name)
         changed = True
 
-    # /tmp is a shared temporary-data directory.  Keep its SYSTEM ownership
-    # while granting ordinary users the directory write access required for
-    # normal temporary files and shell redirection.
-    tmp_id = directory_find(root_payload, "tmp")
-    tmp_security_index = rewrite_record_security(
-        image, layout, tmp_id, VFS_UID_SYSTEM, TEMP_PERMISSIONS)
-    if tmp_security_index is not None:
-        table_indices.add(tmp_security_index)
+    # /temp is the canonical shared temporary-data directory. Existing
+    # metadata is preserved; a newly established directory receives the
+    # canonical system ownership and shared directory permissions. Its
+    # persistent child-mutation policy prevents ordinary users from removing
+    # or renaming one another's entries.
+    temp_id = directory_find(root_payload, "temp")
+    if temp_was_present:
+        temp_offset = record_offset(image, layout["record_table_start"],
+                                     temp_id, layout["record_count"])
+        temp_record = bytes(image[temp_offset:temp_offset + RECORD_BYTES])
+        temp_owner = record_owner(temp_record)
+        temp_permissions = record_permissions(temp_record)
+    else:
+        temp_owner = VFS_UID_SYSTEM
+        temp_permissions = TEMP_PERMISSIONS
+    temp_security_index = rewrite_record_security(
+        image, layout, temp_id, temp_owner, temp_permissions, 1)
+    if temp_security_index is not None:
+        table_indices.add(temp_security_index)
         changed = True
 
     if root_payload != record_payload(image, root_record):
@@ -2000,13 +2029,18 @@ def ensure_session_config(image, layout, username):
     return True
 
 
-def rewrite_record_security(image, layout, record_id, owner_uid, permissions):
+def rewrite_record_security(image, layout, record_id, owner_uid, permissions,
+                            child_mutation_policy=None):
     offset = record_offset(image, layout["record_table_start"], record_id,
                            layout["record_count"])
     record = bytearray(image[offset:offset + RECORD_BYTES])
     old_flags = u64(record, 8)
+    if child_mutation_policy is None:
+        child_mutation_policy = (record_child_mutation_policy(record)
+                                 if u64(record, 0) == 2 else 0)
     new_flags = record_flags(owner_uid, permissions,
-                             bool(old_flags & RECORD_INLINE_DATA))
+                             bool(old_flags & RECORD_INLINE_DATA),
+                             child_mutation_policy)
     if old_flags == new_flags:
         return None
     w64(record, 8, new_flags)
@@ -2306,7 +2340,7 @@ def update(image_path, payload_paths, data_paths, autologin=None):
     if image[:8] != MAGIC:
         raise RuntimeError("not an MGFS v1 image")
     format_minor = u64(image, 16)
-    if format_minor not in (0, MGFS_FORMAT_MINOR):
+    if format_minor not in (0, MGFS_FORMAT_MINOR_LEGACY, MGFS_FORMAT_MINOR):
         raise RuntimeError("unsupported MGFS format minor version")
 
     total_blocks = u64(image, 40)
@@ -2330,6 +2364,8 @@ def update(image_path, payload_paths, data_paths, autologin=None):
     data_payloads = {name: open(path, "rb").read()
                      for (_, name, _), path in zip(DATA_MANIFEST, data_paths)}
     persistent_changed = False
+    if format_minor != MGFS_FORMAT_MINOR:
+        persistent_changed = True
     if reconcile_record_bitmap(image, layout):
         persistent_changed = True
     if format_minor == 0:
@@ -2528,6 +2564,7 @@ def update(image_path, payload_paths, data_paths, autologin=None):
 
     refresh_metadata_checksums(image, layout)
     superblock = bytearray(image[:B])
+    w64(superblock, 16, MGFS_FORMAT_MINOR)
     w64(superblock, 64, 1)
     checksum(superblock, SUPER_CHECKSUM_OFFSET, 200)
     image[:B] = superblock

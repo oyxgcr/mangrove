@@ -1,6 +1,6 @@
 # MGFS on-disk format
 
-This document specifies the current MGFS major version 1, minor version 1
+This document specifies the current MGFS major version 1, minor version 2
 binary format. It is read together with the [MGFS overview](README.md).
 
 All integers are unsigned little-endian 64-bit values unless marked as a byte array. Every structure is packed: no implicit compiler padding is permitted. Every structure begins at an 8-byte-aligned offset. A filesystem block is exactly 4096 bytes.
@@ -29,7 +29,7 @@ All unspecified flag bits and all unspecified enumeration values are reserved an
 | --- | ---: |
 | MGFS_BLOCK_BYTES | 4096 |
 | MGFS_FORMAT_MAJOR | 1 |
-| MGFS_FORMAT_MINOR | 1 |
+| MGFS_FORMAT_MINOR | 2 |
 | MGFS_HEADER_BYTES | 200 |
 | MGFS_RECORD_BYTES | 192 |
 | MGFS_EXTENT_BYTES | 32 |
@@ -37,6 +37,17 @@ All unspecified flag bits and all unspecified enumeration values are reserved an
 | MGFS_BITMAP_HEADER_BYTES | 24 |
 | MGFS_BITMAP_BITS_PER_BLOCK | 32576 |
 | MGFS_MIN_TOTAL_BLOCKS | 64 |
+
+### MGFS 1.1 to 1.2 migration
+
+The updater accepts MGFS 1.1 images and upgrades them to minor version 2
+without renaming, merging, or deleting existing directory entries. Existing
+Record IDs, owners, ordinary permissions, and file contents are preserved.
+The new directory-only child-mutation bit is initialized clear (open) for
+existing directories. The canonical `/temp` directory is configured with
+owner-restricted child mutation. If `/temp` is absent, the updater creates it
+as part of establishing the current system hierarchy; otherwise unrelated
+existing directories are not renamed or merged.
 
 ### State flags
 
@@ -64,11 +75,16 @@ A newly formatted filesystem has state_flags equal to MGFS_STATE_CLEAN.
 | MGFS_RECORD_INLINE_DATA | bit 0 |
 | owner_uid | bits 1 through 32 |
 | permissions | bits 33 through 36 |
+| child_mutation_owner_restricted | bit 41; directory records only |
 
 `MGFS_RECORD_INLINE_DATA` is valid only for an `MGFS_RECORD_FILE` with zero
 extents and `logical_size_bytes` at most 56. The owner field is an unsigned
 32-bit UID. The permission field uses the VFS owner-read, owner-write,
-other-read, and other-write bits and must not be zero.
+other-read, and other-write bits and must not be zero. Bits 37 through 40 are
+reserved and must be zero. Bit 41 selects owner-restricted child mutation for
+directory records; clear selects open child mutation. Bit 41 must be zero on
+file records. Creation defaults are fixed VFS policy and are not stored in or
+inherited from parent directories.
 
 ### Extent flags
 
@@ -174,7 +190,7 @@ A File Record is 192 bytes and 8-byte aligned.
 | Offset | Size | Field |
 | ---: | ---: | --- |
 | 0 | 8 | record_type |
-| 8 | 8 | record_flags: inline-data bit, owner UID, and permissions |
+| 8 | 8 | record_flags: inline-data bit, owner UID, permissions, and directory mutation policy |
 | 16 | 8 | record_id |
 | 24 | 8 | generation |
 | 32 | 8 | logical_size_bytes |
@@ -287,7 +303,7 @@ All unallocated File Record slots are zero. Table slot zero contains the root re
 | Field | Value |
 | --- | ---: |
 | record_type | MGFS_RECORD_DIRECTORY |
-| record_flags | owner UID and nonzero owner/other permissions; INLINE_DATA clear |
+| record_flags | owner UID, nonzero owner/other permissions, and optional directory mutation policy; INLINE_DATA clear |
 | record_id | 1 |
 | generation | 1 |
 | logical_size_bytes | 0 |

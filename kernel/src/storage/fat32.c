@@ -413,6 +413,7 @@ static vfs_node_t *fat32_finddir(vfs_node_t *dir, const char *name) {
                 node->size = entries[i].file_size;
                 vfs_node_set_security(node, VFS_UID_SYSTEM,
                                       FAT32_VOLUME_PERMISSIONS);
+                node->child_mutation_policy = VFS_CHILD_MUTATION_OPEN;
                 node->ref_count = 1;
                 node->super = dir->super;
                 node->fs_data = (void *)(uintptr_t)start_cluster;
@@ -983,11 +984,9 @@ static int fat32_create(vfs_node_t *dir, const char *name, vfs_node_t **out_node
             kfree(node);
             return VFS_ERR_ACCESS_DENIED;
         }
-        vfs_node_set_security(node, owner_uid,
-                              owner_uid == VFS_UID_SYSTEM
-                                  ? VFS_DEFAULT_SYSTEM_PERMISSIONS
-                                  : VFS_DEFAULT_USER_PERMISSIONS);
+        vfs_node_set_security(node, owner_uid, VFS_DEFAULT_FILE_PERMISSIONS);
     }
+    node->child_mutation_policy = VFS_CHILD_MUTATION_OPEN;
     node->ref_count = 1;
     node->super = dir->super;
     node->fs_data = (void *)(uintptr_t)new_cluster;
@@ -1113,10 +1112,9 @@ static int fat32_mkdir(vfs_node_t *dir, const char *name, vfs_node_t **out_node)
             return VFS_ERR_ACCESS_DENIED;
         }
         vfs_node_set_security(node, owner_uid,
-                              owner_uid == VFS_UID_SYSTEM
-                                  ? VFS_DEFAULT_SYSTEM_PERMISSIONS
-                                  : VFS_DEFAULT_USER_PERMISSIONS);
+                              VFS_DEFAULT_DIRECTORY_PERMISSIONS);
     }
+    node->child_mutation_policy = VFS_CHILD_MUTATION_OPEN;
     node->ref_count = 1;
     node->super = dir->super;
     node->fs_data = (void *)(uintptr_t)new_cluster;
@@ -1825,6 +1823,7 @@ static int fat32_mount(vfs_fs_type_t *fs_type, block_device_t *dev,
     root_node->size = 0;
     vfs_node_set_security(root_node, VFS_UID_SYSTEM,
                           FAT32_VOLUME_PERMISSIONS);
+    root_node->child_mutation_policy = VFS_CHILD_MUTATION_OPEN;
     root_node->ref_count = 1;
     root_node->super = sb;
     root_node->fs_data = (void *)(uintptr_t)fs->root_cluster;

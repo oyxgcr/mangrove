@@ -2014,9 +2014,7 @@ static int exfat_create(vfs_node_t *dir, const char *name,
     u32 owner;
     if (!vfs_current_uid(&owner)) return VFS_ERR_ACCESS_DENIED;
     return exfat_create_internal(dir, name, 0U, owner,
-                                 owner == VFS_UID_SYSTEM
-                                     ? VFS_DEFAULT_SYSTEM_PERMISSIONS
-                                     : VFS_DEFAULT_USER_PERMISSIONS,
+                                 VFS_DEFAULT_FILE_PERMISSIONS,
                                  out_node);
 }
 
@@ -2026,9 +2024,7 @@ static int exfat_mkdir(vfs_node_t *dir, const char *name,
     u32 owner;
     if (!vfs_current_uid(&owner)) return VFS_ERR_ACCESS_DENIED;
     return exfat_create_internal(dir, name, EXFAT_ATTR_DIRECTORY, owner,
-                                 owner == VFS_UID_SYSTEM
-                                     ? VFS_DEFAULT_SYSTEM_PERMISSIONS
-                                     : VFS_DEFAULT_USER_PERMISSIONS,
+                                 VFS_DEFAULT_DIRECTORY_PERMISSIONS,
                                  out_node);
 }
 

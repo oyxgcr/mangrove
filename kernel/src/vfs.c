@@ -311,6 +311,30 @@ void vfs_node_set_security(vfs_node_t *node, u32 owner_uid, u32 permissions)
     node->permissions = permissions & VFS_PERMISSION_KNOWN;
 }
 
+void vfs_node_set_child_mutation_policy(
+    vfs_node_t *node, vfs_child_mutation_policy_t child_mutation_policy)
+{
+    if (!node) return;
+    if (node->type != VFS_TYPE_DIRECTORY ||
+        child_mutation_policy > VFS_CHILD_MUTATION_OWNER_RESTRICTED) {
+        node->child_mutation_policy = VFS_CHILD_MUTATION_OPEN;
+        return;
+    }
+    node->child_mutation_policy = child_mutation_policy;
+}
+
+bool vfs_directory_child_mutation_allowed(const vfs_node_t *dir,
+                                          const vfs_node_t *child)
+{
+    u32 uid;
+
+    if (!dir || dir->type != VFS_TYPE_DIRECTORY) return false;
+    if (dir->child_mutation_policy == VFS_CHILD_MUTATION_OPEN) return true;
+    if (dir->child_mutation_policy != VFS_CHILD_MUTATION_OWNER_RESTRICTED ||
+        !child || !vfs_current_uid(&uid)) return false;
+    return uid == dir->owner_uid || uid == child->owner_uid;
+}
+
 void vfs_init(void) {
     fs_type_list = NULL;
     spinlock_init(&vfs_metadata_lock);
@@ -1585,6 +1609,7 @@ int vfs_mkdir_owned(vfs_node_t *dir, const char *name, u32 owner_uid,
 
 int vfs_unlink(vfs_node_t *dir, const char *name) {
     vfs_super_t *sb;
+    vfs_node_t *child;
     int result;
 
     if (!vfs_node_is_live(dir) || !name ||
@@ -1597,7 +1622,9 @@ int vfs_unlink(vfs_node_t *dir, const char *name) {
         return VFS_ERR_ACCESS_DENIED;
     }
     if (!vfs_node_operation_begin(dir, &sb)) return VFS_ERR_DEVICE_GONE;
-    result = dir->ops->unlink(dir, name);
+    child = vfs_finddir_locked(dir, name);
+    result = child && !vfs_directory_child_mutation_allowed(dir, child)
+        ? VFS_ERR_ACCESS_DENIED : dir->ops->unlink(dir, name);
     vfs_node_operation_end(sb);
     return result;
 }
@@ -1617,6 +1644,7 @@ int vfs_unlink_trusted(vfs_node_t *dir, const char *name) {
 
 int vfs_rmdir(vfs_node_t *dir, const char *name) {
     vfs_super_t *sb;
+    vfs_node_t *child;
     int result;
 
     if (!vfs_node_is_live(dir) || !name ||
@@ -1629,7 +1657,9 @@ int vfs_rmdir(vfs_node_t *dir, const char *name) {
         return VFS_ERR_ACCESS_DENIED;
     }
     if (!vfs_node_operation_begin(dir, &sb)) return VFS_ERR_DEVICE_GONE;
-    result = dir->ops->rmdir(dir, name);
+    child = vfs_finddir_locked(dir, name);
+    result = child && !vfs_directory_child_mutation_allowed(dir, child)
+        ? VFS_ERR_ACCESS_DENIED : dir->ops->rmdir(dir, name);
     vfs_node_operation_end(sb);
     return result;
 }
@@ -1650,6 +1680,7 @@ int vfs_rmdir_trusted(vfs_node_t *dir, const char *name) {
 int vfs_rename(vfs_node_t *src_dir, const char *src_name,
                vfs_node_t *dst_dir, const char *dst_name) {
     vfs_super_t *sb;
+    vfs_node_t *source;
     int result;
 
     if (!vfs_node_is_live(src_dir) || !src_name ||
@@ -1667,7 +1698,10 @@ int vfs_rename(vfs_node_t *src_dir, const char *src_name,
     }
     if (src_dir->super != dst_dir->super) return VFS_ERR_UNSUPPORTED;
     if (!vfs_node_operation_begin(src_dir, &sb)) return VFS_ERR_DEVICE_GONE;
-    result = src_dir->ops->rename(src_dir, src_name, dst_dir, dst_name);
+    source = vfs_finddir_locked(src_dir, src_name);
+    result = source && !vfs_directory_child_mutation_allowed(src_dir, source)
+        ? VFS_ERR_ACCESS_DENIED
+        : src_dir->ops->rename(src_dir, src_name, dst_dir, dst_name);
     vfs_node_operation_end(sb);
     return result;
 }
@@ -1680,8 +1714,9 @@ static bool vfs_node_identity_matches(const vfs_node_t *node,
            node->inode == expected_inode;
 }
 
-int vfs_unlink_expected(vfs_node_t *dir, const char *name,
-                        vfs_super_t *expected_super, u64 expected_inode)
+static int vfs_unlink_expected_internal(
+    vfs_node_t *dir, const char *name, vfs_super_t *expected_super,
+    u64 expected_inode, bool authorized)
 {
     vfs_super_t *sb;
     vfs_node_t *actual;
@@ -1696,7 +1731,8 @@ int vfs_unlink_expected(vfs_node_t *dir, const char *name,
     if (!vfs_node_operation_begin(dir, &sb)) return VFS_ERR_DEVICE_GONE;
     actual = vfs_finddir_locked(dir, name);
     if (!vfs_node_identity_matches(actual, expected_super, expected_inode) ||
-        actual->type != VFS_TYPE_FILE) {
+        actual->type != VFS_TYPE_FILE ||
+        (!authorized && !vfs_directory_child_mutation_allowed(dir, actual))) {
         result = VFS_ERR_ACCESS_DENIED;
     } else {
         result = dir->ops->unlink(dir, name);
@@ -1705,8 +1741,24 @@ int vfs_unlink_expected(vfs_node_t *dir, const char *name,
     return result;
 }
 
-int vfs_rmdir_expected(vfs_node_t *dir, const char *name,
-                       vfs_super_t *expected_super, u64 expected_inode)
+int vfs_unlink_expected(vfs_node_t *dir, const char *name,
+                        vfs_super_t *expected_super, u64 expected_inode)
+{
+    return vfs_unlink_expected_internal(dir, name, expected_super,
+                                        expected_inode, false);
+}
+
+int vfs_unlink_expected_authorized(vfs_node_t *dir, const char *name,
+                                   vfs_super_t *expected_super,
+                                   u64 expected_inode)
+{
+    return vfs_unlink_expected_internal(dir, name, expected_super,
+                                        expected_inode, true);
+}
+
+static int vfs_rmdir_expected_internal(
+    vfs_node_t *dir, const char *name, vfs_super_t *expected_super,
+    u64 expected_inode, bool authorized)
 {
     vfs_super_t *sb;
     vfs_node_t *actual;
@@ -1721,7 +1773,8 @@ int vfs_rmdir_expected(vfs_node_t *dir, const char *name,
     if (!vfs_node_operation_begin(dir, &sb)) return VFS_ERR_DEVICE_GONE;
     actual = vfs_finddir_locked(dir, name);
     if (!vfs_node_identity_matches(actual, expected_super, expected_inode) ||
-        actual->type != VFS_TYPE_DIRECTORY) {
+        actual->type != VFS_TYPE_DIRECTORY ||
+        (!authorized && !vfs_directory_child_mutation_allowed(dir, actual))) {
         result = VFS_ERR_ACCESS_DENIED;
     } else {
         result = dir->ops->rmdir(dir, name);
@@ -1730,9 +1783,25 @@ int vfs_rmdir_expected(vfs_node_t *dir, const char *name,
     return result;
 }
 
-int vfs_rename_expected(vfs_node_t *src_dir, const char *src_name,
-                        vfs_super_t *expected_super, u64 expected_inode,
-                        vfs_node_t *dst_dir, const char *dst_name)
+int vfs_rmdir_expected(vfs_node_t *dir, const char *name,
+                       vfs_super_t *expected_super, u64 expected_inode)
+{
+    return vfs_rmdir_expected_internal(dir, name, expected_super,
+                                       expected_inode, false);
+}
+
+int vfs_rmdir_expected_authorized(vfs_node_t *dir, const char *name,
+                                  vfs_super_t *expected_super,
+                                  u64 expected_inode)
+{
+    return vfs_rmdir_expected_internal(dir, name, expected_super,
+                                       expected_inode, true);
+}
+
+static int vfs_rename_expected_internal(
+    vfs_node_t *src_dir, const char *src_name,
+    vfs_super_t *expected_super, u64 expected_inode,
+    vfs_node_t *dst_dir, const char *dst_name, bool authorized)
 {
     vfs_super_t *sb;
     vfs_node_t *actual_source;
@@ -1753,7 +1822,9 @@ int vfs_rename_expected(vfs_node_t *src_dir, const char *src_name,
     if (!vfs_node_operation_begin(src_dir, &sb)) return VFS_ERR_DEVICE_GONE;
     actual_source = vfs_finddir_locked(src_dir, src_name);
     if (!vfs_node_identity_matches(actual_source, expected_super,
-                                   expected_inode)) {
+                                   expected_inode) ||
+        (!authorized && !vfs_directory_child_mutation_allowed(src_dir,
+                                                               actual_source))) {
         result = VFS_ERR_ACCESS_DENIED;
     } else if (vfs_finddir_locked(dst_dir, dst_name)) {
         result = VFS_ERR_ALREADY_EXISTS;
@@ -1762,6 +1833,25 @@ int vfs_rename_expected(vfs_node_t *src_dir, const char *src_name,
     }
     vfs_node_operation_end(sb);
     return result;
+}
+
+int vfs_rename_expected(vfs_node_t *src_dir, const char *src_name,
+                        vfs_super_t *expected_super, u64 expected_inode,
+                        vfs_node_t *dst_dir, const char *dst_name)
+{
+    return vfs_rename_expected_internal(src_dir, src_name, expected_super,
+                                        expected_inode, dst_dir, dst_name,
+                                        false);
+}
+
+int vfs_rename_expected_authorized(
+    vfs_node_t *src_dir, const char *src_name,
+    vfs_super_t *expected_super, u64 expected_inode,
+    vfs_node_t *dst_dir, const char *dst_name)
+{
+    return vfs_rename_expected_internal(src_dir, src_name, expected_super,
+                                        expected_inode, dst_dir, dst_name,
+                                        true);
 }
 
 int vfs_rename_trusted(vfs_node_t *src_dir, const char *src_name,

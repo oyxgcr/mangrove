@@ -308,7 +308,7 @@ DEPS := $(BOOT_OBJS:.o=.d) $(ALL_KERNEL_OBJS:.o=.d)
 
 .PHONY: all help make fresh run fresh-run usb clean test exfat-upcase \
         binaries font sprout sessiond logind logd networkd deviced volumed mount unmount eject lspci lsusb lsdsk diskutil crew info mem time tmon logv hello shoot clear cp ls locate mv mkdir plant read rm rmdir say shutdown reboot uptime date version where fstest nettest ping resolve fetch netinfo netcfg power identity user \
-        image fresh-image usb-image run-usb mkmgfs mgfsck test-time test-terminal \
+        image fresh-image usb-image run-usb mkmgfs mgfsck test-time test-terminal test-mgfs-migration \
         check-image-deps check-usb-deps check-qemu-deps qemu-warning dev-image fresh-dev-image flash-image
 
 # Everyday targets
@@ -339,7 +339,7 @@ usb: flash-image
 
 test:
 	@status=0; \
-	for target in test-time test-terminal; do \
+	for target in test-time test-terminal test-mgfs-migration; do \
 		if $(MAKE) --no-print-directory $$target; then :; else status=1; fi; \
 	done; \
 	exit $$status
@@ -452,6 +452,9 @@ test-terminal:
 		kernel/src/utf8.c -o /tmp/mangrove-utf8-test
 	/tmp/mangrove-utf8-test
 	@echo terminal UTF-8 tests passed
+
+test-mgfs-migration: $(MKMGFS) $(BUILD_DIR)/mgfsck
+	python3 tests/mgfs_migration_test.py $(MKMGFS) $(BUILD_DIR)/mgfsck
 
 check-image-deps:
 	@missing=""; \

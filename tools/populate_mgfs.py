@@ -21,7 +21,7 @@ PERMISSION_OWNER_WRITE = 1 << 1
 PERMISSION_OTHER_READ = 1 << 2
 PERMISSION_OTHER_WRITE = 1 << 3
 SYSTEM_PERMISSIONS = PERMISSION_OWNER_READ | PERMISSION_OWNER_WRITE | PERMISSION_OTHER_READ
-# /tmp is system-owned, but ordinary users need to be able to create their
+# /temp is system-owned, but ordinary users need to be able to create their
 # own temporary files there.  File objects still receive the creating user's
 # ownership and normal permissions.
 TEMP_PERMISSIONS = SYSTEM_PERMISSIONS | PERMISSION_OTHER_WRITE
@@ -29,6 +29,8 @@ USER_PERMISSIONS = PERMISSION_OWNER_READ | PERMISSION_OWNER_WRITE
 RECORD_INLINE_DATA = 1
 RECORD_OWNER_SHIFT = 1
 RECORD_PERMISSIONS_SHIFT = 33
+RECORD_CHILD_MUTATION_SHIFT = 41
+RECORD_CHILD_MUTATION_OWNER_RESTRICTED = 1
 
 def w64(buf, off, value):
     struct.pack_into("<Q", buf, off, value)
@@ -51,11 +53,15 @@ def extent(record, offset, logical, physical, count, flags=1):
         offset += 8
 
 def make_record(record_id, record_type, size=0, extents=(), owner_uid=VFS_UID_SYSTEM,
-                permissions=SYSTEM_PERMISSIONS):
+                permissions=SYSTEM_PERMISSIONS, child_mutation_policy=0):
     record = bytearray(192)
+    child_policy = (RECORD_CHILD_MUTATION_OWNER_RESTRICTED <<
+                    RECORD_CHILD_MUTATION_SHIFT
+                    if record_type == 2 and child_mutation_policy else 0)
     w64(record, 0, record_type)
     w64(record, 8, ((owner_uid << RECORD_OWNER_SHIFT) |
-                    (permissions << RECORD_PERMISSIONS_SHIFT)))
+                    (permissions << RECORD_PERMISSIONS_SHIFT) |
+                    child_policy))
     w64(record, 16, record_id)
     w64(record, 24, 1)
     w64(record, 32, size)
@@ -152,7 +158,7 @@ SECURITY_CONFIG_RECORD_ID = 71
 CONF_RECORD_ID = 5
 CORE_RECORD_ID = 4
 HOME_RECORD_ID = 7
-TMP_RECORD_ID = 6
+TEMP_RECORD_ID = 6
 VOL_RECORD_ID = 73
 DEFAULT_NETWORK_CONFIG = (
     b"// Mangrove network configuration\n"
@@ -259,7 +265,7 @@ def main():
         (2, "bin"), (3, "boot"), (CONF_RECORD_ID, "conf"),
         (CORE_RECORD_ID, "core"), (HOME_RECORD_ID, "home"),
         (SHARE_RECORD_ID, "share"), (STATE_RECORD_ID, "sys"),
-        (TMP_RECORD_ID, "tmp"), (VOL_RECORD_ID, "vol"),
+        (TEMP_RECORD_ID, "temp"), (VOL_RECORD_ID, "vol"),
     )
     root_data = b"".join(directory_entry(record_id, name)
                            for record_id, name in root_directories)
@@ -403,7 +409,8 @@ def main():
         make_record(3, 2, len(boot_data), [(0, first_block + 2, 1, 2)]),
         make_record(4, 2, len(core_data), [(0, first_block + 4, 1, 2)]),
         make_record(5, 2, len(conf_data), [(0, first_block + 3, 1, 2)]),
-        make_record(6, 2, permissions=TEMP_PERMISSIONS),
+        make_record(6, 2, permissions=TEMP_PERMISSIONS,
+                    child_mutation_policy=1),
         make_record(7, 2, len(user_data), [(0, first_block + 8, 1, 2)]),
         make_record(8, 1, len(payloads[8]), file_extents[8]),
         make_record(PITH_RECORD_ID, 1, len(payloads[PITH_RECORD_ID]), kernel_extents),

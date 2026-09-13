@@ -65,6 +65,7 @@ static vfs_node_t *initramfs_finddir(vfs_node_t *dir, const char *name) {
             node->size = child->size;
             vfs_node_set_security(node, VFS_UID_SYSTEM,
                                   VFS_DEFAULT_SYSTEM_PERMISSIONS);
+            node->child_mutation_policy = VFS_CHILD_MUTATION_OPEN;
             node->ref_count = 1;
             node->super = dir->super;
             node->fs_data = child;
@@ -194,6 +195,7 @@ static int initramfs_mount(vfs_fs_type_t *fs_type, block_device_t *dev,
     root_node->size = 0;
     vfs_node_set_security(root_node, VFS_UID_SYSTEM,
                           VFS_DEFAULT_SYSTEM_PERMISSIONS);
+    root_node->child_mutation_policy = VFS_CHILD_MUTATION_OPEN;
     root_node->ref_count = 1;
     root_node->super = sb;
     root_node->fs_data = root_entry;

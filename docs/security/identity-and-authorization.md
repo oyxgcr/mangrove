@@ -63,6 +63,15 @@ enforce its on-disk read-only attribute; exFAT does enforce its read-only
 attribute. MGFS persists the owner and four permission bits; FAT32/exFAT
 ownership is shared-volume policy and is not a stable user-security identity.
 
+Normal creation assigns the caller's UID and `rw:r-` to both files and
+directories. Explicit administrative creation on behalf of a regular user
+assigns that user's UID with the same native defaults. MGFS directories may
+persist an `open` or `owner-restricted` child-mutation policy; the latter
+requires ownership of the child or containing directory in addition to write
+access to the directory. These policies do not alter stored owner or
+permission bits and are not Unix umask, ACL, or sticky-bit semantics. Human
+home directories are private, while `/temp` is shared and owner-restricted.
+
 ## Explicit administration of regular-user data
 
 Human administrators may request the native administrative filesystem
@@ -94,7 +103,8 @@ Administrative delete requires both the containing directory and target to be
   and the source owner is preserved. An administrative move between regular
   users is therefore explicit but does not transfer ownership. Administrative
   create is allowed only in a regular-user-owned MGFS directory and assigns the
-  new object that directory owner's UID with normal user default permissions.
+  new object that directory owner's UID with the native file or directory
+  creation default.
   These checks are repeated after PASS. They do not grant recursive authority:
   a nested object or mounted filesystem must independently satisfy its own
   policy, and system/administrator directories cannot be used as an override

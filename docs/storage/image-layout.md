@@ -41,13 +41,13 @@ The image population tools create this system-owned structure:
 ├── sys/                 mutable system-owned persistent state
 │   ├── accounts/users
 │   └── logs/            boot and persistent logging state
-├── tmp/                 shared temporary data
+├── temp/                shared temporary data
 └── vol/                 removable-volume mount namespace
 ```
 
 `/bin`, `/boot`, `/core`, and `/share` are system payload. `/conf` is persistent
 administrator configuration. `/sys` is persistent system state. `/home` is
-persistent user data. `/tmp` is mutable shared temporary storage. `/vol`
+persistent user data. `/temp` is mutable shared temporary storage. `/vol`
 contains runtime mount entries created and removed by volume policy; external
 filesystem contents are not baked into MGFS.
 

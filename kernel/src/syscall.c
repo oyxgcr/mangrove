@@ -717,6 +717,14 @@ static bool syscall_admin_parent_allowed(
     vfs_node_t *parent, const process_credentials_t *credentials)
 {
     return parent && parent->type == VFS_TYPE_DIRECTORY && credentials &&
+           (vfs_check_access(parent, VFS_ACCESS_WRITE) ||
+            vfs_administrator_override_allowed(parent, credentials));
+}
+
+static bool syscall_admin_user_parent_allowed(
+    vfs_node_t *parent, const process_credentials_t *credentials)
+{
+    return parent && parent->type == VFS_TYPE_DIRECTORY && credentials &&
            vfs_administrator_override_allowed(parent, credentials);
 }
 
@@ -737,7 +745,7 @@ static int syscall_admin_create_path(process_t *process, const char *user_path,
     }
     if (!syscall_admin_credentials(process, &credentials) ||
         !syscall_admin_lookup_path(parent_path, &credentials, &parent) ||
-        !syscall_admin_parent_allowed(parent, &credentials)) {
+        !syscall_admin_user_parent_allowed(parent, &credentials)) {
         return MG_ERR_ACCESS_DENIED;
     }
     if (vfs_finddir_trusted(parent, name)) return MG_ERR_ALREADY_EXISTS;
@@ -749,7 +757,7 @@ static int syscall_admin_create_path(process_t *process, const char *user_path,
     if (!syscall_admin_lookup_path(parent_path, &credentials,
                                    &revalidated_parent) ||
         !syscall_admin_same_node(parent, revalidated_parent) ||
-        !syscall_admin_parent_allowed(revalidated_parent, &credentials)) {
+        !syscall_admin_user_parent_allowed(revalidated_parent, &credentials)) {
         return MG_ERR_ACCESS_DENIED;
     }
     if (vfs_finddir_trusted(revalidated_parent, name))
@@ -757,10 +765,10 @@ static int syscall_admin_create_path(process_t *process, const char *user_path,
     result = directory
         ? vfs_mkdir_owned(revalidated_parent, name,
                           revalidated_parent->owner_uid,
-                          VFS_DEFAULT_USER_PERMISSIONS, &created)
+                          VFS_DEFAULT_DIRECTORY_PERMISSIONS, &created)
         : vfs_create_owned(revalidated_parent, name,
                            revalidated_parent->owner_uid,
-                           VFS_DEFAULT_USER_PERMISSIONS, &created);
+                           VFS_DEFAULT_FILE_PERMISSIONS, &created);
     return syscall_vfs_error(result);
 }
 
@@ -876,8 +884,8 @@ static int syscall_admin_remove(process_t *process, const char *user_path)
         return MG_ERR_ACCESS_DENIED;
     }
     result = type == VFS_TYPE_DIRECTORY
-        ? vfs_rmdir_expected(revalidated_parent, name, super, inode)
-        : vfs_unlink_expected(revalidated_parent, name, super, inode);
+        ? vfs_rmdir_expected_authorized(revalidated_parent, name, super, inode)
+        : vfs_unlink_expected_authorized(revalidated_parent, name, super, inode);
     return syscall_vfs_error(result);
 }
 
@@ -948,9 +956,9 @@ static int syscall_admin_move(process_t *process, const char *source,
         vfs_finddir_trusted(revalidated_destination_parent, destination_name)) {
         return MG_ERR_ACCESS_DENIED;
     }
-    result = vfs_rename_expected(revalidated_source_parent, source_name,
-                                 super, inode, revalidated_destination_parent,
-                                 destination_name);
+    result = vfs_rename_expected_authorized(
+        revalidated_source_parent, source_name, super, inode,
+        revalidated_destination_parent, destination_name);
     return syscall_vfs_error(result);
 }
 

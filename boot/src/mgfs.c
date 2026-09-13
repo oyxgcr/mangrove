@@ -4,7 +4,8 @@
 
 #define MGFS_MAGIC_U64 0x000031765346474DULL
 #define MGFS_FORMAT_MAJOR 1ULL
-#define MGFS_FORMAT_MINOR 1ULL
+#define MGFS_FORMAT_MINOR 2ULL
+#define MGFS_FORMAT_MINOR_LEGACY 1ULL
 #define MGFS_HEADER_BYTES 200ULL
 #define MGFS_MIN_TOTAL_BLOCKS 64ULL
 #define MGFS_BITMAP_BITS_PER_BLOCK 32576ULL
@@ -15,9 +16,11 @@
 #define MGFS_RECORD_INLINE_DATA 0x1ULL
 #define MGFS_RECORD_OWNER_MASK (0xFFFFFFFFULL << 1U)
 #define MGFS_RECORD_PERMISSIONS_MASK (0xFULL << 33U)
+#define MGFS_RECORD_CHILD_MUTATION_OWNER_RESTRICTED (1ULL << 41U)
 #define MGFS_RECORD_FLAGS_KNOWN (MGFS_RECORD_INLINE_DATA | \
                                  MGFS_RECORD_OWNER_MASK | \
-                                 MGFS_RECORD_PERMISSIONS_MASK)
+                                 MGFS_RECORD_PERMISSIONS_MASK | \
+                                 MGFS_RECORD_CHILD_MUTATION_OWNER_RESTRICTED)
 #define MGFS_DIRENT_IN_USE 1ULL
 #define MGFS_DIRENT_TOMBSTONE 2ULL
 #define MGFS_EXTENT_DATA 0x1ULL
@@ -166,7 +169,8 @@ static bool mgfs_boot_record_allocated(const MGFS_BOOT_FS *fs, u64 slot)
             (u8)(1U << (slot % 8ULL))) != 0U;
 }
 
-static bool mgfs_boot_validate_record(const u8 *record)
+static bool mgfs_boot_validate_record(const MGFS_BOOT_FS *fs,
+                                      const u8 *record)
 {
     u64 type = mgfs_boot_le64(record);
     u64 flags = mgfs_boot_le64(record + 8);
@@ -183,6 +187,10 @@ static bool mgfs_boot_validate_record(const u8 *record)
         (type != MGFS_RECORD_FILE && type != MGFS_RECORD_DIRECTORY) ||
         (flags & ~MGFS_RECORD_FLAGS_KNOWN) != 0ULL ||
         (flags & MGFS_RECORD_PERMISSIONS_MASK) == 0ULL ||
+        (type == MGFS_RECORD_FILE &&
+         (flags & MGFS_RECORD_CHILD_MUTATION_OWNER_RESTRICTED) != 0ULL) ||
+        (fs && fs->format_minor == MGFS_FORMAT_MINOR_LEGACY &&
+         (flags & MGFS_RECORD_CHILD_MUTATION_OWNER_RESTRICTED) != 0ULL) ||
         inline_count > 2ULL || inline_count > extent_count ||
         (extent_count == 0ULL && list != 0ULL) ||
         (extent_count <= 2ULL && list != 0ULL)) return false;
@@ -225,7 +233,7 @@ static bool mgfs_boot_read_record(MGFS_BOOT_FS *fs, u64 record_id,
             record = fs->table_block + MGFS_BOOT_BITMAP_HEADER_BYTES +
                      slot_in_table * MGFS_BOOT_RECORD_BYTES;
             if (mgfs_boot_le64(record + 16) == record_id) {
-                if (!mgfs_boot_validate_record(record)) return false;
+                if (!mgfs_boot_validate_record(fs, record)) return false;
                 mgfs_boot_copy(output, record, MGFS_BOOT_RECORD_BYTES);
                 return true;
             }
@@ -441,10 +449,12 @@ EFI_STATUS mgfs_boot_init(MGFS_BOOT_FS *fs,
     if (!mgfs_boot_read_block(fs, 0, superblock) ||
         !mgfs_boot_equal(superblock, (const u8 *)"MGFSv1\0\0", 8U) ||
         mgfs_boot_le64(superblock + 8) != MGFS_FORMAT_MAJOR ||
-        mgfs_boot_le64(superblock + 16) != MGFS_FORMAT_MINOR ||
+        (mgfs_boot_le64(superblock + 16) != MGFS_FORMAT_MINOR &&
+         mgfs_boot_le64(superblock + 16) != MGFS_FORMAT_MINOR_LEGACY) ||
         mgfs_boot_le64(superblock + 24) != MGFS_HEADER_BYTES ||
-        mgfs_boot_le64(superblock + 32) != MGFS_BOOT_BLOCK_BYTES ||
+         mgfs_boot_le64(superblock + 32) != MGFS_BOOT_BLOCK_BYTES ||
         !mgfs_boot_checksum(superblock, MGFS_HEADER_BYTES, 192U)) return EFI_COMPROMISED_DATA;
+    fs->format_minor = mgfs_boot_le64(superblock + 16);
     total_blocks = mgfs_boot_le64(superblock + 40);
     if (total_blocks < MGFS_MIN_TOTAL_BLOCKS || total_blocks > partition_blocks / 8ULL ||
         !mgfs_boot_validate_layout(fs, total_blocks, superblock) ||
@@ -497,7 +507,7 @@ EFI_STATUS mgfs_boot_init(MGFS_BOOT_FS *fs,
             if (slot >= fs->record_count || !mgfs_boot_record_allocated(fs, slot)) continue;
             record = fs->table_block + MGFS_BOOT_BITMAP_HEADER_BYTES +
                      slot_in_table * MGFS_BOOT_RECORD_BYTES;
-            if (!mgfs_boot_validate_record(record)) return EFI_COMPROMISED_DATA;
+            if (!mgfs_boot_validate_record(fs, record)) return EFI_COMPROMISED_DATA;
         }
     }
     {

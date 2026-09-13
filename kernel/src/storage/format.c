@@ -21,7 +21,7 @@
 #define MGFS_BLOCK_BYTES             4096U
 #define MGFS_BLOCK_SECTORS           8ULL
 #define MGFS_FORMAT_MAJOR            1ULL
-#define MGFS_FORMAT_MINOR            1ULL
+#define MGFS_FORMAT_MINOR            2ULL
 #define MGFS_HEADER_BYTES            200ULL
 #define MGFS_RECORD_BYTES            192ULL
 #define MGFS_RECORDS_PER_TABLE_BLOCK 21ULL
@@ -37,7 +37,6 @@
 #define MGFS_METADATA_RECORD_BITMAP     2ULL
 #define MGFS_METADATA_RECORD_TABLE      3ULL
 #define MGFS_RECORD_DIRECTORY            2ULL
-#define MGFS_ROOT_RECORD_FLAGS           (7ULL << 33)
 #define MGFS_CRC64_POLYNOMIAL         0x42F0E1EBA9EA3693ULL
 
 #define MGFS_LABEL_EXTENSION_OFFSET   200U
@@ -206,6 +205,7 @@ static bool format_mgfs(block_device_t *device)
     u64 total_blocks;
     u32 root_owner;
     u32 root_permissions;
+    u64 root_flags;
 
     if (!device || device->sector_size != FORMAT_SECTOR_BYTES) return false;
     /* A runtime-created removable MGFS volume belongs to the authenticated
@@ -214,7 +214,9 @@ static bool format_mgfs(block_device_t *device)
      * normal user despite a successful format. */
     if (!vfs_current_uid(&root_owner)) return false;
     root_permissions = root_owner == VFS_UID_SYSTEM
-        ? VFS_DEFAULT_SYSTEM_PERMISSIONS : VFS_DEFAULT_USER_PERMISSIONS;
+        ? VFS_DEFAULT_SYSTEM_PERMISSIONS : VFS_DEFAULT_DIRECTORY_PERMISSIONS;
+    root_flags = ((u64)root_owner << 1U) |
+                 ((u64)root_permissions << 33U);
     /* GPT's final usable LBA is not necessarily 4 KiB aligned.  MGFS owns
      * complete 4 KiB blocks, so retain at most seven harmless trailing
      * sectors inside the selected extent rather than rejecting an otherwise
@@ -270,9 +272,7 @@ static bool format_mgfs(block_device_t *device)
         if (!index) {
             u8 *root = block + MGFS_BITMAP_HEADER_BYTES;
             store_le64(root, MGFS_RECORD_DIRECTORY);
-            store_le64(root + 8,
-                       ((u64)root_owner << 1U) |
-                       ((u64)root_permissions << 33U));
+            store_le64(root + 8, root_flags);
             store_le64(root + 16, MGFS_ROOT_RECORD_ID);
             store_le64(root + 24, MGFS_INITIAL_GENERATION);
             store_le64(root + 184, crc64(root, MGFS_RECORD_BYTES, 184U));

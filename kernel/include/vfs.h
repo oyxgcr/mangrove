@@ -45,6 +45,16 @@
 #define VFS_DEFAULT_USER_PERMISSIONS \
     (VFS_PERMISSION_OWNER_READ | VFS_PERMISSION_OWNER_WRITE)
 
+/* Creation defaults are independent of the permissions on the containing
+ * directory.  The legacy names above remain for explicit system/user paths. */
+#define VFS_DEFAULT_FILE_PERMISSIONS VFS_DEFAULT_SYSTEM_PERMISSIONS
+#define VFS_DEFAULT_DIRECTORY_PERMISSIONS VFS_DEFAULT_SYSTEM_PERMISSIONS
+
+typedef enum {
+    VFS_CHILD_MUTATION_OPEN = 0,
+    VFS_CHILD_MUTATION_OWNER_RESTRICTED,
+} vfs_child_mutation_policy_t;
+
 #define VFS_OPEN_READ            0x0001U
 #define VFS_OPEN_WRITE           0x0002U
 #define VFS_OPEN_RDWR            (VFS_OPEN_READ | VFS_OPEN_WRITE)
@@ -158,6 +168,8 @@ struct vfs_node {
     u64 size;
     u32 owner_uid;
     u32 permissions;
+    /* Meaningful only for directories. */
+    vfs_child_mutation_policy_t child_mutation_policy;
     u32 ref_count;
     vfs_super_t *super;           // Owning superblock instance
     void *fs_data;                // Driver-private node state
@@ -265,6 +277,10 @@ int vfs_seek(vfs_file_handle_t *handle, i64 offset, int whence, u64 *out_offset)
 bool vfs_check_access(const vfs_node_t *node, u32 permission);
 bool vfs_current_uid(u32 *out_uid);
 void vfs_node_set_security(vfs_node_t *node, u32 owner_uid, u32 permissions);
+void vfs_node_set_child_mutation_policy(
+    vfs_node_t *node, vfs_child_mutation_policy_t child_mutation_policy);
+bool vfs_directory_child_mutation_allowed(const vfs_node_t *dir,
+                                          const vfs_node_t *child);
 /* True only for a human administrator acting on a live regular-user-owned
  * object with persistent MGFS security metadata. */
 bool vfs_administrator_override_allowed(
@@ -304,10 +320,22 @@ int vfs_rename_trusted(vfs_node_t *src_dir, const char *src_name,
 /* Name-based mutation with an already-resolved stable object identity. */
 int vfs_unlink_expected(vfs_node_t *dir, const char *name,
                         vfs_super_t *expected_super, u64 expected_inode);
+/* Used only after a separate, object-bound administrator authorization has
+ * been validated by the syscall layer. */
+int vfs_unlink_expected_authorized(vfs_node_t *dir, const char *name,
+                                   vfs_super_t *expected_super,
+                                   u64 expected_inode);
 int vfs_rmdir_expected(vfs_node_t *dir, const char *name,
                        vfs_super_t *expected_super, u64 expected_inode);
+int vfs_rmdir_expected_authorized(vfs_node_t *dir, const char *name,
+                                  vfs_super_t *expected_super,
+                                  u64 expected_inode);
 int vfs_rename_expected(vfs_node_t *src_dir, const char *src_name,
                         vfs_super_t *expected_super, u64 expected_inode,
                         vfs_node_t *dst_dir, const char *dst_name);
+int vfs_rename_expected_authorized(
+    vfs_node_t *src_dir, const char *src_name,
+    vfs_super_t *expected_super, u64 expected_inode,
+    vfs_node_t *dst_dir, const char *dst_name);
 vfs_node_t *vfs_finddir_trusted(vfs_node_t *dir, const char *name);
 bool vfs_readdir_trusted(vfs_node_t *dir, u32 index, vfs_dirent_t *out_entry);

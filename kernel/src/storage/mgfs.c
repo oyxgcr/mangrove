@@ -12,7 +12,8 @@
 
 #define MGFS_BLOCK_BYTES             4096U
 #define MGFS_FORMAT_MAJOR            1ULL
-#define MGFS_FORMAT_MINOR            1ULL
+#define MGFS_FORMAT_MINOR            2ULL
+#define MGFS_FORMAT_MINOR_LEGACY     1ULL
 #define MGFS_HEADER_BYTES            200ULL
 #define MGFS_RECORD_BYTES            192U
 #define MGFS_RECORDS_PER_TABLE_BLOCK 21ULL
@@ -38,9 +39,13 @@
 #define MGFS_RECORD_OWNER_MASK        (0xFFFFFFFFULL << MGFS_RECORD_OWNER_SHIFT)
 #define MGFS_RECORD_PERMISSIONS_SHIFT 33U
 #define MGFS_RECORD_PERMISSIONS_MASK  (0xFULL << MGFS_RECORD_PERMISSIONS_SHIFT)
+#define MGFS_RECORD_CHILD_MUTATION_SHIFT 41U
+#define MGFS_RECORD_CHILD_MUTATION_OWNER_RESTRICTED \
+    (1ULL << MGFS_RECORD_CHILD_MUTATION_SHIFT)
 #define MGFS_RECORD_FLAGS_KNOWN       (MGFS_RECORD_INLINE_DATA | \
                                       MGFS_RECORD_OWNER_MASK | \
-                                      MGFS_RECORD_PERMISSIONS_MASK)
+                                      MGFS_RECORD_PERMISSIONS_MASK | \
+                                      MGFS_RECORD_CHILD_MUTATION_OWNER_RESTRICTED)
 
 #define MGFS_EXTENT_DATA              0x1ULL
 #define MGFS_EXTENT_DIRECTORY_METADATA 0x2ULL
@@ -93,6 +98,7 @@ typedef struct {
 
 typedef struct {
     block_device_t *dev;
+    u64 format_minor;
     mgfs_layout_t layout;
     u64 total_blocks;
     u64 root_record_id;
@@ -122,11 +128,15 @@ static u64 mgfs_get_le64(const u8 *data)
     return value;
 }
 
-static u64 mgfs_security_flags(u32 owner_uid, u32 permissions, bool inline_data)
+static u64 mgfs_security_flags(u32 owner_uid, u32 permissions,
+                               bool inline_data,
+                               vfs_child_mutation_policy_t child_mutation_policy)
 {
     return (inline_data ? MGFS_RECORD_INLINE_DATA : 0ULL) |
            ((u64)owner_uid << MGFS_RECORD_OWNER_SHIFT) |
-           ((u64)(permissions & VFS_PERMISSION_KNOWN) << MGFS_RECORD_PERMISSIONS_SHIFT);
+           ((u64)(permissions & VFS_PERMISSION_KNOWN) << MGFS_RECORD_PERMISSIONS_SHIFT) |
+           (child_mutation_policy == VFS_CHILD_MUTATION_OWNER_RESTRICTED
+                ? MGFS_RECORD_CHILD_MUTATION_OWNER_RESTRICTED : 0ULL);
 }
 
 static u32 mgfs_record_owner(const u8 record[MGFS_RECORD_BYTES])
@@ -139,6 +149,25 @@ static u32 mgfs_record_permissions(const u8 record[MGFS_RECORD_BYTES])
 {
     return (u32)((mgfs_get_le64(record + 8) & MGFS_RECORD_PERMISSIONS_MASK) >>
                  MGFS_RECORD_PERMISSIONS_SHIFT);
+}
+
+static vfs_child_mutation_policy_t mgfs_record_child_mutation_policy(
+    const u8 record[MGFS_RECORD_BYTES])
+{
+    return (mgfs_get_le64(record + 8) &
+            MGFS_RECORD_CHILD_MUTATION_OWNER_RESTRICTED)
+        ? VFS_CHILD_MUTATION_OWNER_RESTRICTED
+        : VFS_CHILD_MUTATION_OPEN;
+}
+
+static void mgfs_apply_directory_policy(const u8 record[MGFS_RECORD_BYTES],
+                                        vfs_node_t *node)
+{
+    vfs_child_mutation_policy_t child_mutation_policy;
+
+    if (!node || mgfs_get_le64(record) != MGFS_RECORD_DIRECTORY) return;
+    child_mutation_policy = mgfs_record_child_mutation_policy(record);
+    vfs_node_set_child_mutation_policy(node, child_mutation_policy);
 }
 
 static void mgfs_set_error(const char *message)
@@ -423,10 +452,12 @@ static bool mgfs_validate_superblock(
     }
 
     if (mgfs_get_le64(block + 8) != MGFS_FORMAT_MAJOR ||
-        mgfs_get_le64(block + 16) != MGFS_FORMAT_MINOR) {
+        (mgfs_get_le64(block + 16) != MGFS_FORMAT_MINOR &&
+         mgfs_get_le64(block + 16) != MGFS_FORMAT_MINOR_LEGACY)) {
         mgfs_set_error("unsupported MGFS version");
         return false;
     }
+    fs->format_minor = mgfs_get_le64(block + 16);
 
     if (mgfs_get_le64(block + 24) != MGFS_HEADER_BYTES ||
         mgfs_get_le64(block + 32) != MGFS_BLOCK_BYTES) {
@@ -787,7 +818,7 @@ static bool mgfs_find_record_slot(
     return false;
 }
 
-static bool mgfs_validate_record(const u8 *record)
+static bool mgfs_validate_record(const mgfs_fs_t *fs, const u8 *record)
 {
     u64 type = mgfs_get_le64(record);
     u64 flags = mgfs_get_le64(record + 8);
@@ -809,6 +840,10 @@ static bool mgfs_validate_record(const u8 *record)
         (flags & ~MGFS_RECORD_FLAGS_KNOWN) != 0ULL ||
         (mgfs_record_permissions(record) & ~VFS_PERMISSION_KNOWN) != 0U ||
         mgfs_record_permissions(record) == 0U ||
+        (type == MGFS_RECORD_FILE &&
+         (flags & MGFS_RECORD_CHILD_MUTATION_OWNER_RESTRICTED) != 0ULL) ||
+        (fs && fs->format_minor == MGFS_FORMAT_MINOR_LEGACY &&
+         (flags & MGFS_RECORD_CHILD_MUTATION_OWNER_RESTRICTED) != 0ULL) ||
         inline_extent_count > 2ULL || inline_extent_count > extent_count ||
         (extent_count == 0ULL && extent_list_head != 0ULL) ||
         (extent_count <= 2ULL && extent_list_head != 0ULL)) {
@@ -850,7 +885,7 @@ static bool mgfs_read_record(
         return false;
     }
     record = table_block + MGFS_BITMAP_HEADER_BYTES + slot_in_block * MGFS_RECORD_BYTES;
-    if (!mgfs_validate_record(record) || mgfs_get_le64(record + 16) != record_id) {
+    if (!mgfs_validate_record(fs, record) || mgfs_get_le64(record + 16) != record_id) {
         mgfs_set_error("MGFS Record lookup validation failed");
         return false;
     }
@@ -1185,7 +1220,7 @@ static bool mgfs_validate_regular_file_record(const u8 record[MGFS_RECORD_BYTES]
     u64 extent_list_head = mgfs_get_le64(record + 56);
 
     if (mgfs_get_le64(record) != MGFS_RECORD_FILE ||
-        !mgfs_validate_record(record)) {
+        !mgfs_validate_record(NULL, record)) {
         mgfs_set_error("MGFS Record is not a valid regular file");
         return false;
     }
@@ -1490,7 +1525,8 @@ static u64 mgfs_write(vfs_node_t *node, u64 offset, u64 size, const void *buffer
         mgfs_store_le64(new_record, MGFS_RECORD_FILE);
         mgfs_store_le64(new_record + 8,
                         mgfs_security_flags(mgfs_record_owner(old_record),
-                                             mgfs_record_permissions(old_record), true));
+                                             mgfs_record_permissions(old_record), true,
+                                             VFS_CHILD_MUTATION_OPEN));
         mgfs_store_le64(new_record + 16, mgfs_get_le64(old_record + 16));
         mgfs_store_le64(new_record + 24, mgfs_get_le64(old_record + 24) + 1);
         if (old_size > 0) {
@@ -1584,7 +1620,8 @@ static u64 mgfs_write(vfs_node_t *node, u64 offset, u64 size, const void *buffer
     memset(new_record + 128, 0, MGFS_INLINE_DATA_BYTES);
     mgfs_store_le64(new_record + 8,
                     mgfs_security_flags(mgfs_record_owner(old_record),
-                                         mgfs_record_permissions(old_record), false));
+                                         mgfs_record_permissions(old_record), false,
+                                         VFS_CHILD_MUTATION_OPEN));
     mgfs_store_le64(new_record + 32, final_size);
     mgfs_store_le64(new_record + 40, extent_count);
     mgfs_store_le64(new_record + 48, extent_count < 2 ? extent_count : 2);
@@ -1666,7 +1703,8 @@ static int mgfs_truncate(vfs_node_t *node)
     mgfs_store_le64(new_record, MGFS_RECORD_FILE);
     mgfs_store_le64(new_record + 8,
                     mgfs_security_flags(mgfs_record_owner(old_record),
-                                         mgfs_record_permissions(old_record), true));
+                                         mgfs_record_permissions(old_record), true,
+                                         VFS_CHILD_MUTATION_OPEN));
     mgfs_store_le64(new_record + 16, node->inode);
     mgfs_store_le64(new_record + 24, mgfs_get_le64(old_record + 24) + 1);
     mgfs_recompute_checksum(new_record, MGFS_RECORD_CHECKSUM_OFFSET,
@@ -2650,6 +2688,7 @@ static vfs_node_t *mgfs_finddir(vfs_node_t *dir, const char *name)
     node->size = mgfs_get_le64(child_record + 32);
     node->owner_uid = mgfs_record_owner(child_record);
     node->permissions = mgfs_record_permissions(child_record);
+    mgfs_apply_directory_policy(child_record, node);
     node->ref_count = 1;
     node->super = dir->super;
     node->fs_data = (void *)(uintptr_t)node->inode;
@@ -2686,6 +2725,7 @@ static int mgfs_create_node(
     u64 name_length;
     u64 entry_length;
     u32 owner_uid;
+    u32 permissions;
 
     if (!dir || !name || !out_node || dir->type != VFS_TYPE_DIRECTORY ||
         !dir->super || !dir->super->private_data) {
@@ -2706,9 +2746,14 @@ static int mgfs_create_node(
             mgfs_set_error("invalid explicit MGFS security metadata");
             return VFS_ERR_INVALID_PARAM;
         }
+        permissions = explicit_permissions;
     } else if (!vfs_current_uid(&owner_uid)) {
         mgfs_set_error("unable to determine creating process identity");
         return VFS_ERR_ACCESS_DENIED;
+    } else {
+        permissions = record_type == MGFS_RECORD_DIRECTORY
+            ? VFS_DEFAULT_DIRECTORY_PERMISSIONS
+            : VFS_DEFAULT_FILE_PERMISSIONS;
     }
     mgfs_set_error("no error");
     if (mgfs_scan_directory(dir, name, 0, NULL, NULL)) {
@@ -2726,11 +2771,8 @@ static int mgfs_create_node(
     memset(record, 0, sizeof(record));
     mgfs_store_le64(record, record_type);
     mgfs_store_le64(record + 8,
-                    mgfs_security_flags(owner_uid,
-                        explicit_security ? explicit_permissions :
-                        (owner_uid == VFS_UID_SYSTEM
-                            ? VFS_DEFAULT_SYSTEM_PERMISSIONS
-                            : VFS_DEFAULT_USER_PERMISSIONS), false));
+                    mgfs_security_flags(owner_uid, permissions, false,
+                                         VFS_CHILD_MUTATION_OPEN));
     mgfs_store_le64(record + 16, record_id);
     mgfs_store_le64(record + 24, 1ULL);
     mgfs_recompute_checksum(record, MGFS_RECORD_CHECKSUM_OFFSET, MGFS_RECORD_BYTES);
@@ -2756,9 +2798,8 @@ static int mgfs_create_node(
         ? VFS_TYPE_DIRECTORY : VFS_TYPE_FILE;
     (*out_node)->ref_count = 1;
     (*out_node)->owner_uid = owner_uid;
-    (*out_node)->permissions = explicit_security ? explicit_permissions :
-        (owner_uid == VFS_UID_SYSTEM ? VFS_DEFAULT_SYSTEM_PERMISSIONS
-                                     : VFS_DEFAULT_USER_PERMISSIONS);
+    (*out_node)->permissions = permissions;
+    vfs_node_set_child_mutation_policy(*out_node, VFS_CHILD_MUTATION_OPEN);
     (*out_node)->super = dir->super;
     (*out_node)->fs_data = (void *)(uintptr_t)record_id;
     (*out_node)->ops = &mgfs_node_ops;
@@ -2842,7 +2883,7 @@ static bool mgfs_scan_records(mgfs_fs_t *fs)
             }
 
             record = block + MGFS_BITMAP_HEADER_BYTES + slot_in_block * MGFS_RECORD_BYTES;
-            if (!mgfs_validate_record(record)) {
+            if (!mgfs_validate_record(fs, record)) {
                 return false;
             }
             if (!mgfs_insert_record_id(fs, mgfs_get_le64(record + 16), slot)) {
@@ -3002,6 +3043,7 @@ static int mgfs_mount(vfs_fs_type_t *fs_type, block_device_t *dev,
         root->owner_uid = mgfs_record_owner(root_record);
         root->permissions = mgfs_record_permissions(root_record);
         root->size = mgfs_get_le64(root_record + 32);
+        mgfs_apply_directory_policy(root_record, root);
     }
     root->ref_count = 1;
     root->super = sb;

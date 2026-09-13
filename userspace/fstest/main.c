@@ -37,21 +37,23 @@ int main(void)
     if (!saw_hello) return fail("read_bin_hello");
     if (handle_close(directory) < 0) return fail("close_bin_dir");
 
-    result = file_create("/tmp/fstest-persist");
+    result = file_create("/temp/fstest-persist");
     if (result != MG_OK && result != MG_ERR_ALREADY_EXISTS) return fail("create_temp_persist");
-    if (path_info("/tmp/fstest-persist", &info) != MG_OK ||
+    if (path_info("/temp/fstest-persist", &info) != MG_OK ||
         info.type != MG_PATH_TYPE_FILE) return fail("info_temp_persist");
 
-    if (directory_create("/tmp/fstest-source") != MG_OK) return fail("mkdir_temp_source");
-    if (directory_create("/tmp/fstest-destination") != MG_OK) return fail("mkdir_temp_dest");
-    if (directory_create("/tmp/fstest-source") != MG_ERR_ALREADY_EXISTS) return fail("mkdir_temp_source_exists");
+    if (directory_create("/temp/fstest-source") != MG_OK) return fail("mkdir_temp_source");
+    if (directory_create("/temp/fstest-destination") != MG_OK) return fail("mkdir_temp_dest");
+    if (path_info("/temp/fstest-source", &info) != MG_OK ||
+        info.permissions != 0x7U) return fail("mkdir_default_permissions");
+    if (directory_create("/temp/fstest-source") != MG_ERR_ALREADY_EXISTS) return fail("mkdir_temp_source_exists");
 
-    result = directory_open("/tmp/fstest-source");
+    result = directory_open("/temp/fstest-source");
     if (result < 0) return fail("diropen_temp_source");
     if (directory_read((mg_handle_t)result, &entry) != MG_ERR_END_OF_FILE) return fail("dirread_empty_source");
     if (handle_close((mg_handle_t)result) != MG_OK) return fail("dirclose_temp_source");
 
-    if (process_chdir("/tmp/fstest-source") != MG_OK) return fail("chdir_temp_source");
+    if (process_chdir("/temp/fstest-source") != MG_OK) return fail("chdir_temp_source");
     if (file_create("./fstest-file") != MG_OK) return fail("create_relative_file");
     if (file_create("fstest-file") != MG_ERR_ALREADY_EXISTS) return fail("create_file_exists");
 

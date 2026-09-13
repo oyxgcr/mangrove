@@ -14,7 +14,7 @@
 
 #define MGFS_BLOCK_BYTES                 UINT64_C(4096)
 #define MGFS_FORMAT_MAJOR                UINT64_C(1)
-#define MGFS_FORMAT_MINOR                UINT64_C(1)
+#define MGFS_FORMAT_MINOR                UINT64_C(2)
 #define MGFS_HEADER_BYTES                UINT64_C(200)
 #define MGFS_RECORD_BYTES                UINT64_C(192)
 #define MGFS_RECORDS_PER_TABLE_BLOCK     UINT64_C(21)

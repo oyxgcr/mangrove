@@ -1,6 +1,6 @@
 # MGFS volume labels
 
-MGFS major version 1, minor version 1 stores an optional label extension after
+MGFS major version 1, minor version 1 and later store an optional label extension after
 the fixed 200-byte superblock header. The extension does not change the
 original header checksum coverage.
 

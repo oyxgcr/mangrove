@@ -22,6 +22,7 @@ typedef struct
     u64 partition_start;
     u64 partition_blocks;
     u64 total_blocks;
+    u64 format_minor;
     u64 root_record_id;
     u64 record_table_start;
     u64 record_table_blocks;

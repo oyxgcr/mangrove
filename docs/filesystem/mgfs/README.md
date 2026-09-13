@@ -5,7 +5,7 @@ GPT partition named `MANGROVE_ROOT`; the UEFI loader locates that role
 partition and loads `/boot/pith.elf` from its MGFS root. MGFS can also be used
 on removable partitions and on unpartitioned whole devices.
 
-The current on-disk format is major version 1, minor version 1. Its magic is
+The current on-disk format is major version 1, minor version 2. Its magic is
 `MGFSv1\0\0`, its filesystem block size is 4096 bytes, and it currently
 requires a block device with 512-byte logical sectors. The filesystem uses
 UTF-8 names, permanent filesystem-local Record IDs, extent-based file data,
@@ -25,7 +25,8 @@ and File Record. Paths are the application-facing identity; Record IDs remain
 an internal filesystem mechanism.
 
 Files and directories carry a 32-bit owner UID and owner/other read/write
-permissions in their File Record flags. Regular files up to 56 bytes may keep
+permissions in their File Record flags. Directories additionally carry a
+native child-mutation policy. Regular files up to 56 bytes may keep
 their contents inline in the File Record. Larger files, directory streams, and
 extent-list metadata occupy blocks in the data area.
 
@@ -65,3 +66,27 @@ The host tools are:
 The runtime formatter in `kernel/src/storage/format.c`, the kernel driver in
 `kernel/src/storage/mgfs.c`, and the host tools use the same current layout
 constants and invariants.
+
+## Directory creation and mutation policy
+
+Creation defaults are fixed VFS policy, not inherited directory metadata. A
+normal file is owned by the creating UID and starts with `rw:r-`; a normal
+directory is owned by the creating UID and starts with `rw:r-`. Explicit
+trusted creation paths may choose other values, such as system-owned image
+objects or an administrator creating on behalf of a regular user. Existing
+children are never changed by a parent's policy.
+
+MGFS v1.2 stores one directory-only child-mutation policy bit. `open` permits
+any caller who can write the directory to delete or rename an existing child.
+`owner-restricted` additionally requires ownership of the child or containing
+directory. This is a native mutation rule, not a Unix mode, umask, ACL, or
+sticky bit.
+
+The system image gives human home directories private `rw:--` directory
+permissions. `/temp` is system-owned with shared `rw:rw` directory
+permissions and owner-restricted child mutation; children still use the
+normal `rw:r-` file default and retain their creating owner. Existing v1.1
+images are upgraded without renaming or merging existing directory names;
+an existing `/temp` receives this policy, while other existing directories
+retain their names and use open child mutation unless a trusted image policy
+sets the bit.
