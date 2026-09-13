@@ -14,7 +14,7 @@ int main(int argc, char **argv)
     if (command_help_requested(argc, argv))
         return command_print_help(argv[0]);
     if (argc != 2) {
-        command_usage_error(argv[0], "read <file>",
+        command_usage_error(argv[0], "type <file>",
                             argc > 1 && argv[1][0] == '-' ? argv[1] : NULL);
         return 1;
     }

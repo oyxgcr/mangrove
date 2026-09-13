@@ -34,7 +34,7 @@ PAYLOAD_MANIFEST = (
     (16, "locate", "locate"),
     (21, "mv", "mv"),
     (22, "plant", "plant"),
-    (23, "read", "read"),
+    (23, "type", "type"),
     (24, "rm", "rm"),
     (25, "version", "version"),
     (26, "where", "where"),

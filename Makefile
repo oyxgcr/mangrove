@@ -115,7 +115,7 @@ LS_DIR       := $(BUILD_DIR)/ls
 LOCATE_DIR   := $(BUILD_DIR)/locate
 MV_DIR       := $(BUILD_DIR)/mv
 PLANT_DIR    := $(BUILD_DIR)/plant
-READ_DIR     := $(BUILD_DIR)/read
+TYPE_DIR     := $(BUILD_DIR)/type
 RM_DIR       := $(BUILD_DIR)/rm
 MKDIR_DIR    := $(BUILD_DIR)/mkdir
 RMDIR_DIR    := $(BUILD_DIR)/rmdir
@@ -176,7 +176,7 @@ LS           := $(LS_DIR)/ls.elf
 LOCATE       := $(LOCATE_DIR)/locate.elf
 MV           := $(MV_DIR)/mv.elf
 PLANT        := $(PLANT_DIR)/plant.elf
-READ         := $(READ_DIR)/read.elf
+TYPE         := $(TYPE_DIR)/type.elf
 RM           := $(RM_DIR)/rm.elf
 MKDIR        := $(MKDIR_DIR)/mkdir.elf
 RMDIR        := $(RMDIR_DIR)/rmdir.elf
@@ -307,7 +307,7 @@ ALL_KERNEL_OBJS := $(KERNEL_OBJS) $(LIBC_OBJS)
 DEPS := $(BOOT_OBJS:.o=.d) $(ALL_KERNEL_OBJS:.o=.d)
 
 .PHONY: all help make fresh run fresh-run usb clean test exfat-upcase \
-        binaries font sprout sessiond logind logd networkd deviced volumed mount unmount eject lspci lsusb lsdsk diskutil crew info mem time tmon logv hello shoot clear cp ls locate mv mkdir plant read rm rmdir say shutdown reboot uptime date version where fstest nettest ping resolve fetch netinfo netcfg power identity user \
+        binaries font sprout sessiond logind logd networkd deviced volumed mount unmount eject lspci lsusb lsdsk diskutil crew info mem time tmon logv hello shoot clear cp ls locate mv mkdir plant type rm rmdir say shutdown reboot uptime date version where fstest nettest ping resolve fetch netinfo netcfg power identity user \
         image fresh-image usb-image run-usb mkmgfs mgfsck test-time test-terminal test-mgfs-migration \
         check-image-deps check-usb-deps check-qemu-deps qemu-warning dev-image fresh-dev-image flash-image
 
@@ -344,7 +344,7 @@ test:
 	done; \
 	exit $$status
 
-binaries: $(EFI) $(PITH) $(SPROUT) $(SPROUT_CMD) $(SESSIOND) $(LOGIND) $(LOGD) $(NETWORKD) $(DEVICED) $(VOLUMED) $(MOUNT) $(UNMOUNT) $(EJECT) $(LSPCI) $(LSUSB) $(LSDISK) $(DISKUTIL) $(CREW) $(INFO) $(MEM) $(TIME) $(TMON) $(LOGV) $(SHOOT) $(CLEAR) $(CP) $(LS) $(LOCATE) $(MV) $(MKDIR) $(PLANT) $(READ) $(RM) $(RMDIR) $(SAY) $(SHUTDOWN) $(REBOOT) $(UPTIME) $(DATE) $(VERSION) $(WHERE) $(PING) $(RESOLVE) $(FETCH) $(NETINFO) $(NETCFG) $(POWER) $(IDENTITY) $(USER_CMD)
+binaries: $(EFI) $(PITH) $(SPROUT) $(SPROUT_CMD) $(SESSIOND) $(LOGIND) $(LOGD) $(NETWORKD) $(DEVICED) $(VOLUMED) $(MOUNT) $(UNMOUNT) $(EJECT) $(LSPCI) $(LSUSB) $(LSDISK) $(DISKUTIL) $(CREW) $(INFO) $(MEM) $(TIME) $(TMON) $(LOGV) $(SHOOT) $(CLEAR) $(CP) $(LS) $(LOCATE) $(MV) $(MKDIR) $(PLANT) $(TYPE) $(RM) $(RMDIR) $(SAY) $(SHUTDOWN) $(REBOOT) $(UPTIME) $(DATE) $(VERSION) $(WHERE) $(PING) $(RESOLVE) $(FETCH) $(NETINFO) $(NETCFG) $(POWER) $(IDENTITY) $(USER_CMD)
 
 shoot: $(SHOOT)
 
@@ -357,7 +357,7 @@ locate: $(LOCATE)
 mv: $(MV)
 mkdir: $(MKDIR)
 plant: $(PLANT)
-read: $(READ)
+type: $(TYPE)
 rm: $(RM)
 rmdir: $(RMDIR)
 
@@ -677,7 +677,7 @@ USER_C_OBJS := $(SPROUT_DIR)/sprout.o \
                $(MV_DIR)/main.o \
                $(MKDIR_DIR)/main.o \
                $(PLANT_DIR)/plant.o \
-               $(READ_DIR)/read.o \
+               $(TYPE_DIR)/type.o \
                $(RM_DIR)/main.o \
                $(RMDIR_DIR)/main.o \
                $(SAY_DIR)/say.o \
@@ -1112,15 +1112,15 @@ $(PLANT): $(PLANT_DIR)/plant.o $(HELP_OBJ) $(COMMAND_PATH_OBJ) $(USER_CRT) $(USE
 	$(LD_KERNEL) -z max-page-size=0x1000 -T $(USER_LINKER_SCRIPT) -o $@ \
 		$(USER_CRT) $(PLANT_DIR)/plant.o $(HELP_OBJ) $(COMMAND_PATH_OBJ) $(USER_LIBC)
 
-$(READ_DIR)/read.o: userspace/read/main.c userspace/common/path.h \
+$(TYPE_DIR)/type.o: userspace/type/main.c userspace/common/path.h \
                     userspace/common/help.h $(USER_LIBC)
 	@mkdir -p $(dir $@)
 	$(CC) $(USER_CFLAGS) -Iuserspace/common -c $< -o $@
 
-$(READ): $(READ_DIR)/read.o $(HELP_OBJ) $(COMMAND_PATH_OBJ) $(USER_CRT) $(USER_LIBC) $(USER_LINKER_SCRIPT)
+$(TYPE): $(TYPE_DIR)/type.o $(HELP_OBJ) $(COMMAND_PATH_OBJ) $(USER_CRT) $(USER_LIBC) $(USER_LINKER_SCRIPT)
 	@mkdir -p $(dir $@)
 	$(LD_KERNEL) -z max-page-size=0x1000 -T $(USER_LINKER_SCRIPT) -o $@ \
-		$(USER_CRT) $(READ_DIR)/read.o $(HELP_OBJ) $(COMMAND_PATH_OBJ) $(USER_LIBC)
+		$(USER_CRT) $(TYPE_DIR)/type.o $(HELP_OBJ) $(COMMAND_PATH_OBJ) $(USER_LIBC)
 
 $(RM_DIR)/main.o: userspace/rm/main.c userspace/common/path.h \
                   userspace/common/help.h $(USER_LIBC)

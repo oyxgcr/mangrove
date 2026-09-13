@@ -62,7 +62,7 @@ SYSTEM_RECORDS = {
     16: "locate",
     21: "mv",
     22: "plant",
-    23: "read",
+    23: "type",
     24: "rm",
     25: "version",
     26: "where",
@@ -1342,10 +1342,10 @@ def ensure_help_layout(image, layout):
         help_payload = record_payload(
             image, bytes(image[help_offset:help_offset + RECORD_BYTES]))
 
-    # The public log reader was renamed after release.  Preserve its Record
-    # and move only the managed directory entry; user data is untouched.
+    # Preserve Records while moving only managed help entries; user data is
+    # untouched.
     renamed = False
-    for old_name, new_name in (("logs", "logv"),
+    for old_name, new_name in (("logs", "logv"), ("read", "type"),
                                ("disks", "lsdsk"), ("network", "netinfo")):
         old_id = directory_find(help_payload, old_name)
         new_id = directory_find(help_payload, new_name)
@@ -1631,6 +1631,7 @@ def migrate_command_names(image, layout):
     changed = False
     for old_name, new_name in (("copy", "cp"), ("list", "ls"),
                                ("move", "mv"), ("remove", "rm"),
+                               ("read", "type"),
                                ("logs", "logv"),
                                ("disks", "lsdsk"), ("network", "netinfo"),
                                ("tasks", "crew"), ("task", "crew"),

@@ -33,7 +33,7 @@ LS=build/ls/ls.elf
 LOCATE=build/locate/locate.elf
 MV=build/mv/mv.elf
 PLANT=build/plant/plant.elf
-READ=build/read/read.elf
+TYPE=build/type/type.elf
 RM=build/rm/rm.elf
 MKDIR=build/mkdir/mkdir.elf
 RMDIR=build/rmdir/rmdir.elf
@@ -102,7 +102,7 @@ run_mgfs_tool() {
         "$DEVICED" "$VOLUMED" "$LSPCI" "$LSUSB" "$LSDISK" "$CREW" "$MEM" "$TIME" "$TMON" \
         "$LOGV" "$MOUNT" "$UNMOUNT" "$EJECT" "$DISKUTIL" \
         "$SHOOT" "$CLEAR" "$CP" "$SAY" "$UPTIME" "$LS" "$LOCATE" \
-        "$MV" "$PLANT" "$READ" "$RM" "$VERSION" "$WHERE" "$PING" \
+        "$MV" "$PLANT" "$TYPE" "$RM" "$VERSION" "$WHERE" "$PING" \
         "$RESOLVE" "$FETCH" "$NETINFO" "$NETCFG" "$SHUTDOWN" \
         "$REBOOT" "$POWER" \
         "$IDENTITY" "$USER_CMD" "$MKDIR" "$RMDIR" "$SPROUT_CMD" "$DATE" "$INFO" \

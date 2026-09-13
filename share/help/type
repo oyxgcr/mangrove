@@ -1,5 +1,5 @@
-name=read
+name=type
 category=files
 description=display a file
-usage=read <file>
+usage=type <file>
 option=-h, --help    show this help
