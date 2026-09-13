@@ -9,6 +9,16 @@ typedef enum mg_path_type {
     MG_PATH_TYPE_DIRECTORY = 2,
 } mg_path_type_t;
 
+/* Stored owner/other permissions exposed by native path_info(). */
+#define MG_PERMISSION_OWNER_READ   (1U << 0)
+#define MG_PERMISSION_OWNER_WRITE  (1U << 1)
+#define MG_PERMISSION_OTHER_READ   (1U << 2)
+#define MG_PERMISSION_OTHER_WRITE  (1U << 3)
+#define MG_PERMISSION_KNOWN        (MG_PERMISSION_OWNER_READ | \
+                                    MG_PERMISSION_OWNER_WRITE | \
+                                    MG_PERMISSION_OTHER_READ | \
+                                    MG_PERMISSION_OTHER_WRITE)
+
 typedef enum mg_seek_whence {
     MG_SEEK_SET = 0,
     MG_SEEK_CUR = 1,

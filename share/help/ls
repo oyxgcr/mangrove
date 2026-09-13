@@ -1,5 +1,7 @@
 name=ls
 category=files
 description=list directory contents
-usage=ls [path]
+usage=ls [-l|--long] [-t|--tree DEPTH] [path]
+option=-l, --long    show one entry per line with native metadata
+option=-t DEPTH, --tree DEPTH    show a directory tree (maximum depth 16)
 option=-h, --help    show this help
